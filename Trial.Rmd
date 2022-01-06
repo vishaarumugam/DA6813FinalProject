@@ -1,0 +1,845 @@
+---
+title: "Obesity Level Classification"
+author: "Visha"
+date: "12/05/2021"
+output: html_document
+---
+<style type="text/css">
+
+h1.title {
+  font-size: 38px;
+  text-align: center;
+}
+h4.author { 
+  font-size: 18px;
+  text-align: center;
+}
+h4.date { 
+  font-size: 18px;
+  text-align: center;
+}
+
+```{r setup, include=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(Boruta)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(corrplot)
+library(ggfortify)
+library(purrr)
+library(MASS)
+library(devtools)
+library(ROSE)
+library(ResourceSelection)
+#install_github("fawda123/ggord")
+library(ggord)
+library(nnet)
+library(rpart.plot)
+library(rpart)
+library(tree)
+```
+
+## Import the Dataset  
+```{r include=FALSE}
+obesity_data=as.data.frame(read.csv("ObesityDataSet_raw_and_data_sinthetic.csv",header = TRUE))
+obesity_data <- obesity_data %>% rename( eats_high_calor_food = FAVC, eats_veggies = FCVC, 
+                             num_meals = NCP, eats_snacks = CAEC, drinks_water = CH2O, 
+                             counts_calories = SCC, exercises_often = FAF, 
+                             time_using_tech = TUE, drinks_alcohol = CALC, 
+                             method_trans = MTRANS, weight_category = NObeyesdad ) %>% 
+                             mutate( bmi = Weight / Height^2 )
+```
+```{r,echo=FALSE}
+glimpse(obesity_data)
+```
+
+```{r}
+colnames(obesity_data)
+```
+
+
+## Pre-processing of the data
+### Check for Missing Values
+```{r,echo=FALSE}
+#Check for Missing values
+sapply(obesity_data, function(x) sum(is.na(x)))
+```
+
+### Convert the character variables to factors if needed
+```{r, include=FALSE}
+## Convert the Factor Values
+obesity_data$Gender=as.factor(obesity_data$Gender)
+obesity_data$family_history_with_overweight= as.factor(obesity_data$family_history_with_overweight)
+obesity_data$eats_high_calor_food=as.factor(obesity_data$eats_high_calor_food)
+obesity_data$eats_veggies=as.factor(as.integer(obesity_data$eats_veggies))
+obesity_data$num_meals=as.factor(as.integer(obesity_data$num_meals))
+obesity_data$eats_snacks=as.factor(obesity_data$eats_snacks)
+obesity_data$SMOKE=as.factor(obesity_data$SMOKE)
+obesity_data$drinks_water=as.factor(as.integer(obesity_data$drinks_water))
+obesity_data$counts_calories=as.factor(obesity_data$counts_calories)
+obesity_data$exercises_often=as.factor(as.integer(obesity_data$exercises_often))
+obesity_data$time_using_tech=as.factor(as.integer(obesity_data$time_using_tech))
+obesity_data$drinks_alcohol=as.factor(obesity_data$drinks_alcohol)
+obesity_data$method_trans=as.factor(obesity_data$method_trans)
+obesity_data$weight_category=as.factor(obesity_data$weight_category)
+```
+
+```{r,echo=FALSE}
+str(obesity_data)
+```
+
+
+
+```{r, include=FALSE}
+obesity_data_male = obesity_data %>% 
+            filter(Gender == "Male")
+obesity_data_female = obesity_data %>% 
+            filter(Gender =="Female")
+obesity_data_male=obesity_data_male[-1]
+obesity_data_female=obesity_data_female[-1]
+```
+
+## Exploratory Data Analysis
+### summary of the Obesity Data
+```{r,echo=FALSE}
+summary(obesity_data)
+```
+
+### Balanced Data  
+```{r, echo=FALSE}
+ggplot(obesity_data, aes(x=weight_category,fill=weight_category)) + 
+geom_bar() +
+xlab("Obesity Levels") +
+theme(
+  axis.text.x = element_blank(),
+  axis.ticks = element_blank())+
+scale_fill_discrete(name = "Obesity Levels")
+```
+
+### Weight category Distribution  
+```{r,include=FALSE}
+# frequency of the obesity distribution
+obeslvl.table = table(obesity_data$weight_category)
+
+# Create a pie chart 
+obeslvl.prop.table <- round(prop.table(obeslvl.table)*100,2)
+obeslvl.prop.df <- as.data.frame(obeslvl.prop.table)
+colnames(obeslvl.prop.df)=c("Obesity_Level","Proportion")
+
+obeslvl.prop.df <- obeslvl.prop.df %>%
+  arrange(desc(Obesity_Level)) %>%
+  mutate(lab.ypos = cumsum(Proportion) - 0.5*Proportion)
+```
+
+
+```{r,echo=FALSE}
+ggplot(obeslvl.prop.df, aes(x = "", y = Proportion, fill = Obesity_Level)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(y = lab.ypos, label = Proportion), color = "white")+
+  scale_fill_discrete(name = "Obesity Levels")+
+  theme_void()
+```
+
+Based on the distribution chart, there is more or less equal distribution among all the obesity levels with the slight highest concentration on the "Obesity type I" and the next highest concentration on the type "Obesity Type III".   
+
+### Height, Weight and Age distribution  
+```{r,echo=FALSE}
+obesity_data_num <- obesity_data[ ,c("weight_category","Age","Height","Weight")]
+ggplot(data = melt(obesity_data_num, id.var = "weight_category"), mapping = aes(x = value)) + 
+    geom_histogram(bins = 10, aes(fill=weight_category), alpha=0.5) + facet_wrap(~variable, scales =      'free_x')
+
+```  
+
+As per height, weight and age distribution plot, height and weight follows the reasonable normal distribution whereas on age it is slightly right skewed.  
+
+### Age Level Analysis  
+```{r,echo=FALSE}
+ggplot(obesity_data, aes(x=Age,fill=weight_category)) + 
+geom_histogram(breaks=seq(10, 60, by=5)) +
+xlab("Age") +
+xlim(c(10,62))+
+scale_fill_discrete(name = "Obesity Levels")
+```
+
+As per the above plot the count of obesity level people from obesity type I to III is more in the age range between 20 and 30,from  30 to 45 the data contains the people with more obesity level II and III which are at high risk of getting obesity associated health problems.
+
+### Gender Level Analysis  
+```{r,echo=FALSE}
+ggplot(obesity_data, aes(x=Gender,fill=weight_category)) +
+geom_bar() +
+xlab("Gender") 
+```
+
+
+From the above plot , it is observed that the data set contains female with more concentration of Obesity type I and III  ,whereas the male contains only the concentration of Obesity type I and II.The data set doesn't have balanced record on weight category on gender level.
+
+### Correlation Matrix   
+```{r,echo=FALSE}
+corMatMy <- cor(obesity_data[,c("Age","Height","Weight","bmi")])
+corrplot(corMatMy, order = "hclust", tl.cex = 0.7)
+```
+
+
+There is no correlation exist between age, height and weight but there exists a strong correlation between bmi and height/weight as expected; since bmi is calculated using the formula $$bmi=weight/height^2$$. So in modelling either we use height and weight or bmi for the best fit.
+
+### Relation between Weight and category  
+```{r,echo=FALSE}
+ggplot( obesity_data, aes( y = Weight, x = weight_category ) ) +
+  geom_boxplot() +
+  ggtitle( 'Weight ~ Weight Category' ) +
+  xlab( 'Weight Category' ) +
+  scale_x_discrete(labels = c( "Insuff. Wgt", "Normal Wgt", "Overweight L1", "Overweight L2", "Obesity T1", "Obesity T2", "Obesity T3" ))
+```
+
+
+Based on the box plot, there is no strong relation between the weight category and the median weight. Till overweight II category the median weight is increased after that the median weight is lower than the overweight category. so from this we can predict that obesity level is not classified based on weight , it depends upon many other parameters.
+
+### Relationship between bmi and category  
+```{r,echo=FALSE}
+ggplot( obesity_data, aes( y = bmi, x = weight_category ) ) +
+  geom_boxplot() +
+  ggtitle( 'bmi ~ Weight Category' ) +
+  xlab( 'Weight Category' ) +
+  scale_x_discrete(labels = c( "Insuff. Wgt", "Normal Wgt", "Overweight L1", "Overweight L2", "Obesity T1", "Obesity T2", "Obesity T3" ))
+```
+
+
+Similarly as weight, bmi doesnt have no strong relationship on the weight category. Till overweight II category the median bmi is increased after that the median bmi is lower than the overweight category.At the same time,the average bmi level for the weight category is as below. but the data doesn't reflect the same.so this provides the strong evidence that the obesity level is not classified based on height and weight , it depends upon many other parameters.
+
+|BMI|Weight Status|
+:-:|:-:
+|Below 18.5|Underweight|
+|18.5—24.9|Healthy|
+|25.0—29.9|Overweight|
+|30.0 and Above|Obese|
+
+### Relationship between Height and category  
+```{r,echo=FALSE}
+ggplot( obesity_data, aes( y = Height, x = weight_category ) ) +
+  geom_boxplot() +
+  ggtitle( 'Height ~ Weight Category' ) +
+  xlab( 'Weight Category' ) +
+  scale_x_discrete(labels = c( "Insuff. Wgt", "Normal Wgt", "Overweight L1", "Overweight L2", "Obesity T1", "Obesity T2", "Obesity T3" ))
+```
+
+## Feature Selection
+### Stepwise AIC method
+```{r warning=FALSE,include=FALSE}
+model_obesity_null = glm(weight_category ~ 1,
+                        data = obesity_data, family = "binomial")
+model_obesity_full = glm(weight_category ~ .-bmi,
+                        data = obesity_data, family = "binomial")
+
+model_obesity_AIC = step(model_obesity_null,
+                        scope = list(upper= model_obesity_full),
+                        test = "Chisq",
+                        direction = "both",
+                        trace = FALSE)
+
+```
+
+```{r,echo=FALSE}
+summary(model_obesity_AIC)
+```
+
+```{r,echo=FALSE}
+hoslem.test(model_obesity_AIC$y, fitted(model_obesity_AIC),g=10)
+```
+
+
+The p value(1) of the Hosmer and lemeshow test is greater than the significant level(0.1), so we can conclude that the model by stepwise AIC method is adequate and we can conclude that **Age, height, weight,eats_snacks,time_using_tech  and exercises_often** are the best predictors to find out obesity level of an individual.
+
+```{r warning=FALSE,echo=FALSE}
+anova(model_obesity_full, test="Chisq")
+```
+
+As per the Residual deviance difference from anova test, the addition of predictors such as Gender,Age,weight,eats_snacks,time_using_tech and method_trans to the null model reduces the deviance drastically, so the following predictors such as **Gender,Age,weight,eats_snacks,time_using_tech and method_trans** are considered as best predictors in estimating the obesity level of an individual.
+
+
+```{r,include=FALSE}
+imp <- as.data.frame(varImp(model_obesity_full))
+imp <- data.frame(Importance = imp$Overall,
+           Variable_Name   = rownames(imp))
+imp_ord=imp[order(imp$Importance),]
+```
+
+### Variable Importance   
+```{r, echo=FALSE}
+imp_ord[1:10,]
+```
+
+Since full dataset logistic regression varaiable selection and variable importance doesn't provide clear information about the best predictors, Split the data set based on gender and find out the best predictors to estimate the obesity level as per the gender.  
+
+```{r warning=FALSE,include=FALSE}
+model_obesity_male_null = glm(weight_category ~ 1,
+                        data = obesity_data_male, family = "binomial")
+model_obesity_male_full = glm(weight_category ~ . -bmi,
+                        data = obesity_data_male, family = "binomial")
+
+model_obesity_male_AIC = step(model_obesity_male_null,
+                        scope = list(upper= model_obesity_male_full),
+                        test = "Chisq",
+                        direction = "both",
+                        trace = FALSE)
+
+```
+
+### Stepwise Model selection for male Individuals.  
+
+```{r,echo=FALSE}
+summary(model_obesity_male_AIC)
+```
+
+```{r echo=FALSE}
+hoslem.test(model_obesity_male_AIC$y, fitted(model_obesity_male_AIC),g=10)
+```
+
+The p value(1) of the Hosmer and lemeshow test is greater than the significant level(0.1), so we can conclude that the model by stepwise AIC method is adequate and we can conclude that height, weight and drinks_water are the best predictors to find out obesity level in male individual.
+
+```{r warning=FALSE,echo=FALSE}
+anova(model_obesity_male_full,test="Chisq")
+```
+
+As per the Residual deviance difference from anova test, the addition of predictors such as Age,weight and Height to the null model reduces the deviance drastically, so the following predictors such as Age,weight and height are considered as best predictors in estimating the obesity level in male individual.
+
+### Stepwise model selection for female individuals:
+
+```{r warning=FALSE,include=FALSE}
+model_obesity_female_null = glm(weight_category ~ 1,
+                        data = obesity_data_female, family = "binomial")
+model_obesity_female_full = glm(weight_category ~ .,
+                        data = obesity_data_female, family = "binomial")
+
+model_obesity_female_AIC = step(model_obesity_female_null,
+                        scope = list(upper= model_obesity_female_full),
+                        test = "Chisq",
+                        direction = "both",
+                        trace = FALSE)
+```
+
+```{r,echo=FALSE}
+summary(model_obesity_female_AIC)
+```
+
+
+```{r,echo=FALSE}
+hoslem.test(model_obesity_female_AIC$y, fitted(model_obesity_female_AIC),g=10)
+```
+
+The p value(1) of the Hosmer and lemeshow test is greater than the significant level(0.1), so we can conclude that the model by stepwise AIC method is adequate and we can conclude that height, weight, eats_snacks, time_using_tech and exercises_often are the best predictors to find out obesity level in fmale individual.  
+
+```{r warning=FALSE,echo=FALSE}
+anova(model_obesity_female_full,test="Chisq")
+```
+
+As per the Residual deviance difference from anova test, the addition of predictors such as Age,weight,eats_snacks and time_using_tech to the null model reduces the deviance drastically, so the following predictors such as Age,weight,eats_snacks and time_using_tech are considered as best predictors in estimating the obesity level in female individual.
+
+Since logistic regression p value is too high, variable importance value of full logistic regression doesn't give much clarity in deciding the significant value, I have used step wise model selection and anova inferential test for the full data set and data set with male and female individual separately in order to come with the reasonable predictors to estimate the obesity level. Based on the above analysis the predictors such as **Age, Gender, weight, height, eat_snacks, drinks_water,time_using_tech,method_trans and exercises_often** are the best parameters in estimating obesity level of an individual.
+
+## Split the data  
+In order to use various modelling techniques and compare the model accuracy, split the dataset into test and train with 80 and 20 respectively.
+```{r include=FALSE}
+train<-sample(nrow(obesity_data),0.7*nrow(obesity_data))
+obesity_data_train<-obesity_data[train,]
+obesity_data_test<-obesity_data[-train,]
+```
+
+```{r}
+table(obesity_data_train$weight_category)
+```
+```{r}
+table(obesity_data_test$weight_category)
+```
+
+
+## Various Modelling techniques 
+
+```{r,include=FALSE}
+TC <- trainControl(method="repeatedcv", number=5,repeats=3,classProbs=TRUE)
+```
+
+### Logistic Regression:
+#### Full Model
+```{r, include=FALSE}
+obesity_mod_glm_full <- train(weight_category~. -bmi, data=obesity_data_train,
+                 method = "glmnet",
+                 metric="Accuracy",
+                 trControl = TC,
+                 lambda = seq(0.001,0.1,by = 0.001),
+                 trace=FALSE)
+
+obesity_pred_glm_full<-predict(obesity_mod_glm_full,obesity_data_test)
+cm_log_full=caret::confusionMatrix(obesity_pred_glm_full,obesity_data_test$weight_category)
+```
+
+```{r, echo=FALSE}
+cm_log_full$overall
+cm_log_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters  
+```{r, include=FALSE}
+obesity_mod_glm_sig <- train(weight_category~Age+Gender+Height+Weight+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "glmnet",
+                 metric="Accuracy",
+                 trControl = TC,
+                 lambda = seq(0.001,0.1,by = 0.001),
+                 trace=FALSE)
+
+obesity_pred_glm_sig<-predict(obesity_mod_glm_sig,obesity_data_test)
+cm_log_sig=caret::confusionMatrix(obesity_pred_glm_sig,obesity_data_test$weight_category)
+```
+```{r,echo=FALSE}
+cm_log_sig$overall
+cm_log_sig$byClass[(1:7),]
+```
+
+#### Model with significant parameters and bmi
+```{r,include=FALSE}
+obesity_mod_glm_bmi <- train(weight_category~Age+Gender+bmi+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "glmnet",
+                 metric="Accuracy",
+                 trControl = TC,
+                 lambda = seq(0.001,0.1,by = 0.001))
+
+obesity_pred_glm_bmi<-predict(obesity_mod_glm_bmi,obesity_data_test)
+cm_log_bmi=caret::confusionMatrix(obesity_pred_glm_bmi,obesity_data_test$weight_category,positive="Obesity_Type_I")
+```
+```{r,echo=FALSE}
+cm_log_bmi$overall
+cm_log_bmi$byClass[(1:7),]
+```
+
+### K Nearest Neighbor  
+#### Full Model
+```{r,include=FALSE}
+obesity_mod_knn_full <- train(weight_category~. -bmi, data=obesity_data_train,
+                 method = "knn",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_knn_full<-predict(obesity_mod_knn_full,obesity_data_test)
+
+cm_knn_full=caret::confusionMatrix(obesity_pred_knn_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r, echo=FALSE}
+cm_knn_full$overall
+cm_knn_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters
+```{r,include=FALSE}
+obesity_mod_knn_sig <- train(weight_category~Age+Gender+Height+Weight+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "knn",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_knn_sig<-predict(obesity_mod_knn_sig,obesity_data_test)
+
+cm_knn_sig=caret::confusionMatrix(obesity_pred_knn_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r, echo=FALSE}
+cm_knn_sig$overall
+cm_knn_sig$byClass[(1:7),]
+```
+
+#### Model with significant parameters and bmi
+```{r,include=FALSE}
+obesity_mod_knn_bmi <- train(weight_category~Age+Gender+bmi+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "knn",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_knn_bmi<-predict(obesity_mod_knn_sig,obesity_data_test)
+
+cm_knn_bmi=caret::confusionMatrix(obesity_pred_knn_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_knn_bmi$overall
+cm_knn_bmi$byClass[(1:7),]
+```
+
+### Random Forest
+#### Full Model
+```{r, include=FALSE}
+obesity_mod_rf_full <- train(weight_category~. -bmi, data=obesity_data_train,
+                 method = "rf",
+                 metric="Accuracy",
+                 trControl = TC,
+                 variable_importance= TRUE)
+
+obesity_pred_rf_full<-predict(obesity_mod_rf_full,obesity_data_test)
+cm_rf_full=caret::confusionMatrix(obesity_pred_rf_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_rf_full$overall
+cm_rf_full$byClass[(1:7),]
+```
+
+
+#### Model with Significant parameters
+```{r,include=FALSE}
+obesity_mod_rf_sig <- train(weight_category~Age+Gender+Height+Weight+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "rf",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_rf_sig<-predict(obesity_mod_rf_sig,obesity_data_test)
+cm_rf_sig=caret::confusionMatrix(obesity_pred_rf_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_rf_sig$overall
+cm_rf_sig$byClass[(1:7),]
+```
+
+#### Model with Significant parameters and bmi
+```{r, include=FALSE}
+obesity_mod_rf_bmi <- train(weight_category~Age+Gender+bmi+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "rf",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_rf_bmi<-predict(obesity_mod_rf_bmi,obesity_data_test)
+cm_rf_bmi=caret::confusionMatrix(obesity_pred_rf_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r, echo=FALSE}
+cm_rf_bmi$overall
+cm_rf_bmi$byClass[(1:7),]
+```
+
+### Decision Tree
+#### Full Model
+```{r}
+str(obesity_data_train)
+```
+
+```{r}
+obesity_mod_dt_full_1=rpart(weight_category~.-bmi,data = obesity_data_train,method = "class",control = rpart.control(minsplit = 20,cp=0.1))
+summary(obesity_mod_dt_full_1)
+```
+```{r}
+rpart.plot(obesity_mod_dt_full_1)
+```
+
+
+```{r}
+obesity_dt_pred_full_1=predict(obesity_mod_dt_full_1,obesity_data_test,type ="class")
+obesity_dt_pred_full_1
+```
+
+```{r}
+caret::confusionMatrix(obesity_dt_pred_full_1,obesity_data_test$weight_category)
+```
+
+
+```{r,include=FALSE}
+obesity_mod_dt_full <- train(weight_category~Gender+Age+Height+Weight+family_history_with_overweight+eats_high_calor_food+eats_veggies+num_meals+eats_snacks+SMOKE+drinks_water+counts_calories+exercises_often+time_using_tech+drinks_alcohol+method_trans, data=obesity_data_train,
+                 method = "rpart",
+                 trControl = trainControl(method = "cv"))
+
+obesity_pred_dt_full<-predict(obesity_mod_dt_full,obesity_data_test)
+cm_dt_full=caret::confusionMatrix(obesity_pred_dt_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r}
+obesity_pred_dt_full
+```
+```{r}
+cm_dt_full
+```
+
+
+
+```{r, echo=FALSE}
+cm_dt_full
+cm_dt_full$overall
+cm_dt_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters
+```{r, include=FALSE}
+obesity_mod_dt_sig <- train(weight_category~Age+Gender+Height+Weight+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "rpart",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_dt_sig<-predict(obesity_mod_dt_sig,obesity_data_test)
+ cm_dt_sig=caret::confusionMatrix(obesity_pred_dt_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r,echo=FALSE}
+cm_dt_sig$overall
+cm_dt_sig$byClass[(1:7),]
+```
+
+#### Model with significant parameters and bmi
+```{r,include=FALSE}
+obesity_mod_dt_bmi <- train(weight_category~Age+Gender+bmi+eats_snacks+drinks_water+time_using_tech+method_trans+exercises_often, data=obesity_data_train,
+                 method = "rpart",
+                 metric="Accuracy",
+                 trControl = TC)
+
+obesity_pred_dt_bmi<-predict(obesity_mod_dt_bmi,obesity_data_test)
+cm_dt_bmi=caret::confusionMatrix(obesity_pred_dt_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_dt_bmi$overall
+cm_dt_bmi$byClass[(1:7),]
+```
+
+
+### Linear Discriminant Analysis:  
+#### Full model
+```{r, include=FALSE,warning=FALSE}
+obesity_mod_lda_full <- train(weight_category~`Gender`+Age+Height+Weight+`family_history_with_overweight`+`eats_high_calor_food`+`eats_veggies`+`num_meals`+`eats_snacks`+`SMOKE`+`drinks_water`+`counts_calories`+`exercises_often`+`time_using_tech`+`drinks_alcohol`+`method_trans`, data=obesity_data_train,
+                 method = 'lda',
+                 trControl = TC)
+
+obesity_pred_lda_full<-predict(obesity_mod_lda_full,obesity_data_test)
+cm_lda_full=caret::confusionMatrix(obesity_pred_lda_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r, echo=FALSE}
+cm_lda_full$overall
+cm_lda_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters
+```{r, include=FALSE}
+obesity_mod_lda_sig <- train(weight_category~Age+`Gender`+Height+Weight+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "lda",
+                 trControl = TC)
+
+obesity_pred_lda_sig<-predict(obesity_mod_lda_sig,obesity_data_test)
+cm_lda_sig=caret::confusionMatrix(obesity_pred_lda_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_lda_sig$overall
+cm_lda_sig$byClass[(1:7),]
+```
+
+#### Model with significant parameters and bmi
+```{r, include=FALSE}
+obesity_mod_lda_bmi <- train(weight_category~Age+`Gender`+bmi+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "lda",
+                 trControl = TC)
+
+obesity_pred_lda_bmi<-predict(obesity_mod_lda_bmi,obesity_data_test)
+cm_lda_bmi=caret::confusionMatrix(obesity_pred_lda_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_lda_bmi$overall
+cm_lda_bmi$byClass[(1:7),]
+```
+
+
+### Support Vector Machines
+#### Full Model
+```{r, include=FALSE}
+obesity_mod_svm_full <- train(weight_category~`Gender`+Age+Height+Weight+`family_history_with_overweight`+`eats_high_calor_food`+`eats_veggies`+`num_meals`+`eats_snacks`+`SMOKE`+`drinks_water`+`counts_calories`+`exercises_often`+`time_using_tech`+`drinks_alcohol`+`method_trans`, data=obesity_data_train,
+                 method = 'svmRadial',
+                 trControl = TC)
+
+obesity_pred_svm_full<-predict(obesity_mod_svm_full,obesity_data_test)
+cm_svm_full=caret::confusionMatrix(obesity_pred_svm_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_svm_full$overall
+cm_svm_full$byClass[(1:7),]
+```
+
+#### Model with Significant Parameters
+```{r, include=FALSE}
+obesity_mod_svm_sig <- train(weight_category~Age+`Gender`+Height+Weight+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "svmRadial",
+                 trControl = trainControl(method = "cv"))
+
+obesity_pred_svm_sig<-predict(obesity_mod_svm_sig,obesity_data_test)
+cm_svm_sig=caret::confusionMatrix(obesity_pred_svm_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r, echo=FALSE}
+cm_svm_sig$overall
+cm_svm_sig$byClass[(1:7),]
+```
+#### Model with significant parameters and bmi
+```{r,include=FALSE}
+obesity_mod_svm_bmi <- train(weight_category~Age+`Gender`+bmi+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "svmRadial",
+                 trControl = trainControl(method = "cv"))
+
+obesity_pred_svm_bmi<-predict(obesity_mod_svm_bmi,obesity_data_test)
+cm_svm_bmi=caret::confusionMatrix(obesity_pred_svm_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r,echo=FALSE}
+cm_svm_bmi$overall
+cm_svm_bmi$byClass[(1:7),]
+```
+
+
+### Gradient Boosting Method
+#### Full Model
+```{r,include=FALSE}
+obesity_mod_gbm_full <- train(weight_category~. -bmi, data=obesity_data_train,
+                 method = "gbm",
+                 trControl = trainControl(method="cv"))
+
+obesity_pred_gbm_full<-predict(obesity_mod_gbm_full,obesity_data_test)
+cm_gbm_full=caret::confusionMatrix(obesity_pred_gbm_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_gbm_full$overall
+cm_gbm_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters
+```{r, include=FALSE}
+obesity_mod_gbm_sig <- train(weight_category~Age+`Gender`+Height+Weight+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "gbm",
+                 trControl = trainControl(method="cv"))
+
+obesity_pred_gbm_sig<-predict(obesity_mod_gbm_sig,obesity_data_test)
+cm_gbm_sig=caret::confusionMatrix(obesity_pred_gbm_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_gbm_sig$overall
+cm_gbm_sig$byClass[(1:7),]
+```
+
+#### Model with significant parameters and bmi
+```{r, include=FALSE}
+obesity_mod_gbm_bmi <- train(weight_category~Age+`Gender`+bmi+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "gbm",
+                 trControl = trainControl(method = "cv"))
+
+obesity_pred_gbm_bmi<-predict(obesity_mod_gbm_bmi,obesity_data_test)
+cm_gbm_bmi=caret::confusionMatrix(obesity_pred_gbm_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+
+```{r,echo=FALSE}
+cm_gbm_bmi$overall
+cm_gbm_bmi$byClass[(1:7),]
+```
+
+### Neural Network
+#### Model with significant parameters and bmi
+```{r,include=FALSE}
+obesity_mod_nnet_bmi <- train(weight_category~Age+`Gender`+bmi+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "nnet",
+                 trControl = TC)
+
+obesity_pred_nnet_bmi<-predict(obesity_mod_nnet_bmi,obesity_data_test)
+cm_nnet_bmi=caret::confusionMatrix(obesity_pred_nnet_bmi,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+
+```
+
+```{r,echo=FALSE}
+cm_nnet_bmi$overall
+cm_nnet_bmi$byClass[(1:7),]
+```
+
+#### Full model
+```{r,include=FALSE}
+obesity_mod_nnet_full <- train(weight_category~. -bmi, data=obesity_data_train,
+                 method = "nnet",
+                 trControl = trainControl(method="cv"))
+
+obesity_pred_nnet_full<-predict(obesity_mod_nnet_full,obesity_data_test)
+cm_nnet_full=caret::confusionMatrix(obesity_pred_nnet_full,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r,echo=FALSE}
+cm_nnet_full$overall
+cm_nnet_full$byClass[(1:7),]
+```
+
+#### Model with significant parameters
+```{r, include=FALSE}
+obesity_mod_nnet_sig <- train(weight_category~Age+`Gender`+Height+Weight+`eats_snacks`+`drinks_water`+`time_using_tech`+`method_trans`+`exercises_often`, data=obesity_data_train,
+                 method = "nnet",
+                 trControl = trainControl(method="cv"))
+
+obesity_pred_nnet_sig<-predict(obesity_mod_nnet_sig,obesity_data_test)
+cm_nnet_sig=caret::confusionMatrix(obesity_pred_nnet_sig,obesity_data_test$weight_category,positive=c("Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"))
+```
+```{r,echo=FALSE}
+cm_nnet_sig$overall
+cm_nnet_sig$byClass[(1:7),]
+```
+
+
+
+## Decision Tree Pruning
+```{r}
+tree.obesity=tree(weight_category~.,data=obesity_data)
+```
+```{r}
+summary(tree.obesity)
+```
+```{r}
+plot(tree.obesity)
+text(tree.obesity,pretty = 0)
+```
+```{r}
+tree.obesity
+```
+
+```{r}
+tree.obesity.train=tree(weight_category~.,data=obesity_data_train)
+tree.pred=predict(tree.obesity.train,obesity_data_test,type='class')
+length(tree.pred)
+length(obesity_data_test$weight_category)
+table(tree.pred,obesity_data_test$weight_category)
+```
+
+```{r}
+caret::confusionMatrix(tree.pred,obesity_data_test$weight_category)
+```
+
+
+
+## Model Comparision
+```{r,include=FALSE}
+cm_list <- list(GBM_FULL=cm_gbm_full, GBM_SIG=cm_gbm_sig,GBM_BMI=cm_gbm_bmi, 
+                NNET_FULL=cm_nnet_full, NNET_SIG=cm_nnet_sig,NNET_BMI=cm_nnet_bmi,
+                LDA_FULL=cm_lda_full, LDA_SIG=cm_lda_sig,LDA_BMI=cm_lda_bmi,
+                DT_FULL=cm_dt_full, DT_SIG=cm_dt_sig,DT_BMI=cm_dt_bmi,
+                SVM_FULL=cm_svm_full, SVM_SIG=cm_svm_sig,SVM_BMI=cm_svm_bmi,
+                RF_FULL=cm_rf_full, RF_SIG=cm_rf_sig,RF_BMI=cm_rf_bmi,
+                KNN_FULL=cm_knn_full, KNN_SIG=cm_knn_sig,KNN_BMI=cm_knn_bmi,
+                LOG_FULL=cm_log_full, LOG_SIG=cm_log_sig,LOG_BMI=cm_log_bmi)
+
+results <- data.frame(sapply(cm_list, function(x) x$overall))
+Accuracy=results[1,]
+output_report=data.frame(model=names(results),Accuracy=t(Accuracy))
+output_report_ord=output_report[order(output_report$Accuracy,decreasing = TRUE),]
+```
+
+```{r,echo=FALSE}
+output_report_ord[1:10,]
+```
+## Conclusion:
+
+As Per the Model comparison table, top 3 model are Random forest with significant parameters, Gradient Boosting method with significant parameters and bmi  and Random forest with significant parameters and bmi with the accuracy of 97%.
+
+So the model comparison accuracy results confirmed that the predictors such as **Age,(Height,Weight) or bmi,Gender,eats_snacks,drinks_water,time_using_tech,method_trans and exercises_often** are the best predictors in classifying the individual with accurate weight category.Also , the recall value and balanced accuracy for all the models for the obesity class is almost higher than 98% , so it gives as strong evidence that the above predictors are the best predictors in classifying the weight category.
+
+As per the coefficients , one can avoid getting into the obesity category by changing their lifestyle with the below changes.
+          * Reduce the weight as per the Height.
+          * Avoid food between meals.
+          * Drink lots of water
+          * Exercise often.
+
+```{r, echo=FALSE}
+data.frame(model_obesity_full$coefficients)
+```
